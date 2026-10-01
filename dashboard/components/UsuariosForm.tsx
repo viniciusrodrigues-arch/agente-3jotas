@@ -83,6 +83,7 @@ function LinhaCorretor({
 }
 
 export function UsuariosForm({ corretoresIniciais }: { corretoresIniciais: CorretorAcesso[] }) {
+  const [modo, setModo] = useState<"vincular" | "gestao">("vincular");
   const [corretores, setCorretores] = useState(corretoresIniciais);
   const [toast, setToast] = useState<ToastMensagem | null>(null);
   const [usuarios, setUsuarios] = useState<UsuarioPermissao[]>([]);
@@ -136,7 +137,45 @@ export function UsuariosForm({ corretoresIniciais }: { corretoresIniciais: Corre
 
   return (
     <div className="space-y-4">
-      <div className="space-y-3">
+      <div role="tablist" aria-label="Tipo de gerenciamento de usuários" className="inline-flex rounded-lg bg-gray-100 p-1">
+        {(["vincular", "gestao"] as const).map((opcao) => (
+          <button
+            key={opcao}
+            type="button"
+            role="tab"
+            id={`usuarios-tab-${opcao}`}
+            aria-selected={modo === opcao}
+            aria-controls={`usuarios-painel-${opcao}`}
+            onClick={() => setModo(opcao)}
+            className={`rounded-md px-5 py-2 text-sm font-semibold transition-colors ${
+              modo === opcao ? "bg-white text-navy-900 shadow-sm" : "text-text-secondary hover:text-navy-900"
+            }`}
+          >
+            {opcao === "vincular" ? "Vincular" : "Gestão"}
+          </button>
+        ))}
+      </div>
+
+      {modo === "vincular" && <div id="usuarios-painel-vincular" role="tabpanel" aria-labelledby="usuarios-tab-vincular" className="space-y-4">
+        <p className="text-sm text-text-secondary">
+          Vincule cada corretor a um usuário já criado em Supabase Auth (Authentication &gt; Users) pelo email — o
+          corretor passa a ver só as próprias análises e reativações ao logar.
+        </p>
+
+        <div className="space-y-3">
+          {corretores.map((c) => (
+            <LinhaCorretor
+              key={c.id}
+              corretor={c}
+              onVinculado={(id) => { marcarVinculado(id); void carregarUsuarios(); }}
+              onDesvinculado={(id) => { marcarDesvinculado(id); void carregarUsuarios(); }}
+              onErro={(texto) => setToast({ tipo: "erro", texto })}
+            />
+          ))}
+        </div>
+      </div>}
+
+      {modo === "gestao" && <div id="usuarios-painel-gestao" role="tabpanel" aria-labelledby="usuarios-tab-gestao" className="space-y-3">
         <div>
           <h2 className="font-semibold text-navy-900">Administradores e gestores</h2>
           <p className="text-sm text-text-secondary">Defina o acesso de cada conta do Supabase Auth. Gestores acompanham todos os corretores; apenas administradores alteram configurações e permissões. Sem acesso aguarda um vínculo ou uma permissão.</p>
@@ -163,25 +202,7 @@ export function UsuariosForm({ corretoresIniciais }: { corretoresIniciais: Corre
             )}
           </Card>
         ))}
-      </div>
-
-      <h2 className="font-semibold text-navy-900">Vínculo de corretores</h2>
-      <p className="text-sm text-text-secondary">
-        Vincule cada corretor a um usuário já criado em Supabase Auth (Authentication &gt; Users) pelo email — o
-        corretor passa a ver só as próprias análises e reativações ao logar.
-      </p>
-
-      <div className="space-y-3">
-        {corretores.map((c) => (
-          <LinhaCorretor
-            key={c.id}
-            corretor={c}
-            onVinculado={(id) => { marcarVinculado(id); void carregarUsuarios(); }}
-            onDesvinculado={(id) => { marcarDesvinculado(id); void carregarUsuarios(); }}
-            onErro={(texto) => setToast({ tipo: "erro", texto })}
-          />
-        ))}
-      </div>
+      </div>}
 
       {toast && <Toast mensagem={toast} onDone={() => setToast(null)} />}
     </div>
