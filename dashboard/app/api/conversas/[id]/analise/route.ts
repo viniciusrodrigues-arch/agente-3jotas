@@ -16,8 +16,8 @@ import { getDashboardSession } from "@/lib/session";
 // (uso do botão de desconsiderar dentro do histórico de dias).
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getDashboardSession();
-  if (session?.role !== "admin") {
-    return NextResponse.json({ ok: false, erro: "Apenas administradores podem desconsiderar análises." }, { status: 403 });
+  if (session?.role !== "admin" && session?.role !== "gestor") {
+    return NextResponse.json({ ok: false, erro: "Apenas administradores e gestores podem desconsiderar análises." }, { status: 403 });
   }
 
   const { id } = await params;
