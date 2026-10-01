@@ -58,7 +58,7 @@ interface ParametroCriterio {
   ativo: boolean;
 }
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.6-flash";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 function createServiceClient() {
@@ -143,10 +143,9 @@ async function buscarMensagensDoGrupo(
     .from("mensagens")
     .select("*")
     .in("conversa_id", conversaIds)
-    .order("enviada_em", { ascending: true })
-    .returns<Mensagem[]>();
+    .order("enviada_em", { ascending: true });
 
-  const elegiveis = (todasMensagens ?? []).filter((m: Mensagem) => {
+  const elegiveis = ((todasMensagens ?? []) as Mensagem[]).filter((m) => {
     if (EH_CONTEUDO_VAZIO.test(m.texto)) return false;
     if (m.remetente === "corretor" && EH_APRESENTACAO_IA.test(m.texto)) return false;
     const handoff = handoffPorConversa.get(m.conversa_id);
@@ -309,11 +308,11 @@ async function resolverDiaDaConversa(
     .from("conversas")
     .select("id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id")
     .eq("id", conversaId)
-    .maybeSingle<Conversa>();
+    .maybeSingle();
 
   if (!conversa) return null;
 
-  const resultado = await buscarMensagensDoGrupo(supabase, conversa);
+  const resultado = await buscarMensagensDoGrupo(supabase, conversa as Conversa);
   return resultado?.dia ?? null;
 }
 
@@ -631,7 +630,9 @@ original.`;
         contents: [{ role: "user", parts: [{ text: `Interação do dia:\n\n${transcricao}` }] }],
         generationConfig: { responseMimeType: "application/json", responseSchema },
       },
-      metadata: { key: conversa.id },
+      // Sem o dia, o poll da revisão refazia consultas por item e estourava
+      // o timeout em lotes grandes.
+      metadata: { key: conversa.id, dia },
     });
   }
 

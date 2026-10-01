@@ -157,6 +157,23 @@ function createClintClient() {
       const deals = await buscarDeals({ contact_id: contactId, limit: "1" });
       return deals[0]?.contact ?? null;
     },
+    // Fallback quando o corretor não apareceu na amostra de
+    // buscarPrimeiraPaginaDeals (corretor novo, poucos deals ainda, nenhum
+    // deles entre os 200 mais recentes globais) — busca só os deals DESSE
+    // user_id específico. Confirmado em teste real que a Clint filtra de
+    // verdade por user_id (não ignora o parâmetro).
+    //
+    // limit=1 não é confiável sozinho: o deal mais recente pode ter
+    // `user: null` (ex: deal fechado por esse user_id via `won_by`, mas sem
+    // o objeto `user` populado no retorno) mesmo havendo outros deals do
+    // mesmo user_id com `user` preenchido — confirmado em teste real com 3
+    // corretores que ficaram presos no placeholder por causa disso. Busca
+    // uma amostra maior e usa o primeiro deal com `user` de fato presente.
+    buscarNomePorUserId: async (userId: string): Promise<string | null> => {
+      const deals = await buscarDeals({ user_id: userId, limit: "50" });
+      const comUser = deals.find((d) => d.user?.full_name);
+      return comUser?.user?.full_name ?? null;
+    },
   };
 }
 
@@ -177,7 +194,9 @@ const MAX_CHATS_POR_EXECUCAO = 20;
 // sincronizados, que são baratos de pular) — segurança pra não rodar sobre
 // um dia inteiro de chats antigos numa única invocação mesmo quando nenhum
 // deles conta pro teto acima.
-const MAX_CHATS_EXAMINADOS_POR_EXECUCAO = 300;
+// Com 300, a função podia recomeçar sempre nos mesmos chats e nunca alcançar
+// o restante da janela de ontem+hoje (especialmente nas últimas contas).
+const MAX_CHATS_EXAMINADOS_POR_EXECUCAO = 2000;
 
 Deno.serve(async (req) => {
   const authHeader = req.headers.get("Authorization");
@@ -286,7 +305,7 @@ async function sincronizarChat(
   cursor: string,
   nomesCorretor: Map<string, string>,
 ): Promise<{ mensagensGravadas: number }> {
-  const corretorId = await upsertCorretor(supabase, chat.user_id, nomesCorretor);
+  const corretorId = await upsertCorretor(supabase, clint, chat.user_id, nomesCorretor);
   const leadId = await upsertLead(supabase, clint, chat.contact_id);
   if (!corretorId || !leadId) return { mensagensGravadas: 0 };
 
@@ -687,12 +706,29 @@ function montarCamposMensagem(msg: ClintMessage, remetente: "corretor" | "lead")
 async function upsertCorretor(
   // deno-lint-ignore no-explicit-any
   supabase: any,
+  clint: ReturnType<typeof createClintClient>,
   userId: string | null,
   nomesCorretor: Map<string, string>,
 ): Promise<string | null> {
   if (!userId) return null;
 
-  const nomeReal = nomesCorretor.get(userId);
+  let nomeReal = nomesCorretor.get(userId);
+
+  // Corretor novo (nunca visto) e o mapa geral (200 deals mais recentes,
+  // sem filtro) não tinha esse user_id — acontece com corretor recém
+  // cadastrado na Clint, ainda sem deal recente o bastante pra entrar
+  // nessa amostra. Busca dedicada só pra esse user_id antes de recorrer ao
+  // placeholder, pra evitar que o nome_crm fique "Corretor <id>" à toa
+  // quando o nome real já existe na Clint. Só roda quando o corretor ainda
+  // não existe em `corretores` — pra quem já foi criado antes (inclusive
+  // com nome editado manualmente), não vale a chamada extra, já que o
+  // upsert abaixo é no-op de qualquer forma.
+  if (!nomeReal) {
+    const { data: existente } = await supabase.from("corretores").select("id").eq("crm_id", userId).maybeSingle();
+    if (!existente) {
+      nomeReal = (await clint.buscarNomePorUserId(userId)) ?? undefined;
+    }
+  }
 
   await supabase
     .from("corretores")

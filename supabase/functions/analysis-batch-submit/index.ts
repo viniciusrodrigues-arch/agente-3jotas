@@ -55,7 +55,7 @@ interface ParametroCriterio {
   ativo: boolean;
 }
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.6-flash";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 function createServiceClient() {
@@ -122,22 +122,25 @@ async function buscarMensagensDoGrupo(
 ): Promise<MensagensDoDia | null> {
   const canonicaId = conversa.substituida_por_id ?? conversa.id;
 
-  const { data: grupo } = await supabase
+  const { data: grupo, error: grupoError } = await supabase
     .from("conversas")
     .select("id, humano_assumiu_em")
     .or(`id.eq.${canonicaId},substituida_por_id.eq.${canonicaId}`);
 
+  if (grupoError) throw new Error(`buscar grupo ${canonicaId}: ${grupoError.message}`);
+
   const conversaIds = (grupo ?? []).map((c: { id: string }) => c.id);
   const handoffPorConversa = new Map((grupo ?? []).map((c: { id: string; humano_assumiu_em: string | null }) => [c.id, c.humano_assumiu_em]));
 
-  const { data: todasMensagens } = await supabase
+  const { data: todasMensagens, error: mensagensError } = await supabase
     .from("mensagens")
     .select("*")
     .in("conversa_id", conversaIds)
-    .order("enviada_em", { ascending: true })
-    .returns<Mensagem[]>();
+    .order("enviada_em", { ascending: true });
 
-  const elegiveis = (todasMensagens ?? []).filter((m: Mensagem) => {
+  if (mensagensError) throw new Error(`buscar mensagens ${canonicaId}: ${mensagensError.message}`);
+
+  const elegiveis = ((todasMensagens ?? []) as Mensagem[]).filter((m) => {
     // Mensagem de template do WhatsApp Business (blast automático, não
     // digitado pelo corretor) — sync-clint grava esse placeholder fixo
     // quando o content_type do Clint é TEMPLATE (ver textoMensagem/switch
@@ -306,7 +309,22 @@ async function atualizarStatusEmLotesPorDia(supabase: any, pares: ConversaDia[],
 // no corpo total; conversas normais (poucas dezenas de mensagens) ficam bem
 // abaixo disso mesmo em lotes de várias centenas. Se o volume diário crescer
 // muito, pode ser necessário migrar pra upload de arquivo JSONL.
-const MAX_CONVERSAS_POR_LOTE = 500;
+// O cron chama esta função repetidamente e drena o backlog em lotes pequenos.
+// Isso mantém a preparação abaixo do timeout do pg_net/Edge Function.
+const MAX_CONVERSAS_POR_LOTE = 50;
+const CONCORRENCIA_PREPARACAO = 5;
+
+async function paraCadaComConcorrencia<T>(itens: T[], concorrencia: number, tarefa: (item: T) => Promise<void>): Promise<void> {
+  let proximo = 0;
+  const workers = Array.from({ length: Math.min(concorrencia, itens.length) }, async () => {
+    while (true) {
+      const indice = proximo++;
+      if (indice >= itens.length) return;
+      await tarefa(itens[indice]);
+    }
+  });
+  await Promise.all(workers);
+}
 
 Deno.serve(async (req) => {
   const authHeader = req.headers.get("Authorization");
@@ -345,7 +363,7 @@ Deno.serve(async (req) => {
   // forma, ver limpeza de linhas 'pendente' órfãs mais abaixo).
   const conversaIds = [...new Set(pendentes.map((p: { conversa_id: string }) => p.conversa_id))];
 
-  // Buscar as até 500 conversas de uma vez só com `.in()` gera uma URL
+  // Buscar muitas conversas de uma vez só com `.in()` gera uma URL
   // gigante (cada uuid ~36 chars) que já derrubou essa function com erro de
   // protocolo HTTP/2 ("stream error") quando o backlog estava grande —
   // silenciosamente, sem nunca marcar nada como 'processando', então o
@@ -358,13 +376,12 @@ Deno.serve(async (req) => {
     const { data: parte, error: parteError } = await supabase
       .from("conversas")
       .select("id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id")
-      .in("id", idsDoLote)
-      .returns<Conversa[]>();
+      .in("id", idsDoLote);
 
     if (parteError) {
       return new Response(`erro ao buscar conversas: ${parteError.message}`, { status: 500 });
     }
-    conversas.push(...(parte ?? []));
+    conversas.push(...((parte ?? []) as Conversa[]));
   }
 
   if (!conversas.length) {
@@ -387,31 +404,35 @@ Deno.serve(async (req) => {
   const semCorretorHumano: ConversaDia[] = [];
   const comRequest: ConversaDia[] = [];
 
-  for (const conversa of conversas) {
-    const resultado = await buscarMensagensDoGrupo(supabase, conversa);
-    if (!resultado || resultado.mensagens.length === 0) {
-      semMensagens.push(conversa.id);
-      continue;
-    }
-    const { dia, mensagens } = resultado;
+  try {
+    await paraCadaComConcorrencia(conversas, CONCORRENCIA_PREPARACAO, async (conversa) => {
+      const resultado = await buscarMensagensDoGrupo(supabase, conversa);
+      if (!resultado || resultado.mensagens.length === 0) {
+        semMensagens.push(conversa.id);
+        return;
+      }
+      const { dia, mensagens } = resultado;
 
-    // "100% IA": nenhuma mensagem de corretor tem autor_crm_user_id
-    // preenchido — quem atendeu até agora foi só a IA de qualificação
-    // (Lívia/Maria), o corretor dono do chat ainda não escreveu nada.
-    // Avaliar essa conversa seria pontuar a IA no lugar do corretor. Não
-    // fica preso pra sempre: essa checagem roda de novo a cada noite, então
-    // assim que um humano responder de verdade ela entra no lote seguinte
-    // normalmente — diferente da trava antiga (0032), que ficava guardada
-    // num status já calculado e não se corrigia sozinha quando a regra ou
-    // os dados mudavam.
-    const temCorretorHumano = mensagens.some((m) => m.remetente === "corretor" && m.autor_crm_user_id);
-    if (!temCorretorHumano) {
-      semCorretorHumano.push({ conversa_id: conversa.id, dia });
-      continue;
-    }
+      // "100% IA": nenhuma mensagem de corretor tem autor_crm_user_id
+      // preenchido — quem atendeu até agora foi só a IA de qualificação
+      // (Lívia/Maria), o corretor dono do chat ainda não escreveu nada.
+      // Avaliar essa conversa seria pontuar a IA no lugar do corretor. Não
+      // fica preso pra sempre: essa checagem roda de novo a cada noite, então
+      // assim que um humano responder de verdade ela entra no lote seguinte
+      // normalmente — diferente da trava antiga (0032), que ficava guardada
+      // num status já calculado e não se corrigia sozinha quando a regra ou
+      // os dados mudavam.
+      const temCorretorHumano = mensagens.some((m) => m.remetente === "corretor" && m.autor_crm_user_id);
+      if (!temCorretorHumano) {
+        semCorretorHumano.push({ conversa_id: conversa.id, dia });
+        return;
+      }
 
-    comRequest.push({ conversa_id: conversa.id, dia });
-    requests.push(montarRequestInline(conversa.id, dia, mensagens, playbook, responseSchema));
+      comRequest.push({ conversa_id: conversa.id, dia });
+      requests.push(montarRequestInline(conversa.id, dia, mensagens, playbook, responseSchema));
+    });
+  } catch (err) {
+    return new Response(`erro ao preparar lote: ${err instanceof Error ? err.message : String(err)}`, { status: 500 });
   }
 
   // "Sem mensagens" aqui é só o que sobra DEPOIS do filtro de template/vazio/
@@ -424,11 +445,13 @@ Deno.serve(async (req) => {
   // de fato. Não tem "dia" calculável (não sobrou mensagem nenhuma pra achar
   // o dia mais recente) — usa hoje só como chave de upsert, mesma convenção
   // do sync-clint pra linhas sem interação real ainda.
-  if (semMensagens.length) {
-    const hoje = diaLocal(new Date().toISOString());
+  const hoje = diaLocal(new Date().toISOString());
+  const semMensagensHoje: ConversaDia[] = semMensagens.map((id) => ({ conversa_id: id, dia: hoje }));
+
+  if (semMensagensHoje.length) {
     await atualizarStatusEmLotesPorDia(
       supabase,
-      semMensagens.map((id) => ({ conversa_id: id, dia: hoje })),
+      semMensagensHoje,
       { status: "nao_elegivel", erro: "sem mensagens reais no período (só template/apresentação automática, sem interação humana)" },
     );
   }
@@ -443,16 +466,23 @@ Deno.serve(async (req) => {
   // Limpa possíveis linhas 'pendente' órfãs da mesma conversa com um `dia`
   // diferente do calculado agora (ex: sync-clint gravou a fila com "hoje",
   // mas a última atividade real é de ontem) — evita acumular lixo de fila
-  // que nunca seria retomado (nada mais aponta pra essas linhas).
-  const todosOsPares = [...comRequest, ...semCorretorHumano];
-  for (const par of todosOsPares) {
-    await supabase
+  // que nunca seria retomado (nada mais aponta pra essas linhas). Precisa
+  // incluir semMensagens também: o upsert de nao_elegivel acima usa
+  // dia=hoje como chave, então a linha 'pendente' original (com o dia real
+  // da última mensagem, quase sempre diferente de hoje) nunca seria
+  // atingida pelo upsert — sem essa limpeza ela ficava presa em 'pendente'
+  // pra sempre, sendo repescada em toda chamada seguinte sem nunca sair da
+  // fila (bug observado: milhares de conversas só-template travadas).
+  const todosOsPares = [...comRequest, ...semCorretorHumano, ...semMensagensHoje];
+  await paraCadaComConcorrencia(todosOsPares, CONCORRENCIA_PREPARACAO, async (par) => {
+    const { error } = await supabase
       .from("analises")
       .delete()
       .eq("conversa_id", par.conversa_id)
       .eq("status", "pendente")
       .neq("dia", par.dia);
-  }
+    if (error) throw new Error(`limpar pendência órfã ${par.conversa_id}: ${error.message}`);
+  });
 
   if (!requests.length) {
     return new Response(JSON.stringify({ ok: true, enviados: 0, motivo: "sem conversas com mensagens" }), {
