@@ -1,3 +1,5 @@
+-- LEGADO: não aplicar com o pacote gemini-diario. Use reduzir-reanalises-janela-noturna.sql.
+-- O submit novo recusa submissões automáticas fora da janela noturna.
 -- EXECUTAR SOMENTE DEPOIS de publicar as versões novas de:
 --   1. analysis-batch-submit
 --   2. analysis-batch-poll

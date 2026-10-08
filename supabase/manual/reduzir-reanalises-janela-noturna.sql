@@ -1,4 +1,3 @@
--- Rotina atual: várias submissões na janela noturna, preservando o comando existente.
 -- Publicar primeiro analysis-batch-submit com o filtro de dias encerrados.
 -- Janela de 00:00 a 03:50 em Fortaleza (03:00 a 06:50 UTC).
 -- Repete lotes de até 50 para escoar a fila, sem avaliar o dia em andamento.
