@@ -23,3 +23,5 @@ Doze testes Deno, checagem das funções e testes PostgreSQL passaram. Uma avali
 Atualização de recuperação autorizada em 19/10: poll v26 oferece revisão faltante sem repetir a primeira análise. O SQL inclui a RPC privada de leitura dessas revisões. O modo reconciliarEnvios só consulta o provedor e associa um batch quando IDs de execução são confirmados; nunca reenvia uma operação incerta.
 
 03-recuperar-pendencias.sql é um acionamento pontual, já aplicado. Abrange dias encerrados até 18/10, com janelas de até sete dias, e não muda a rotina noturna. Os três jobs temporários se removem ao terminar ou em 21/10 00:00 Fortaleza. O dia 19 segue a rotina de fechamento normal.
+
+Na recuperação de 19/10, quatro operações de 14/10 sem resultado recuperável foram liberadas para execução nova após consulta completa do provedor, mantendo o histórico de cobrança anterior desconhecida. Isso foi uma decisão operacional pontual, não comportamento automático do modo reconciliarEnvios.
