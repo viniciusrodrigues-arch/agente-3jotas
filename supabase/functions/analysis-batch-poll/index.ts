@@ -59,8 +59,8 @@ interface ParametroCriterio {
   ativo: boolean;
 }
 
-const MODEL = Deno.env.get("GEMINI_ANALYSIS_MODEL") ?? "gemini-3.6-flash";
-const REVIEW_MODEL = Deno.env.get("GEMINI_REVIEW_MODEL") ?? "gemini-3.6-flash";
+const MODEL = Deno.env.get("GEMINI_ANALYSIS_MODEL") ?? "gemini-3.5-flash-lite";
+const REVIEW_MODEL = Deno.env.get("GEMINI_REVIEW_MODEL") ?? "gemini-3.5-flash-lite";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 function createServiceClient() {
@@ -185,12 +185,16 @@ async function concluirExecucao(supabase: any, e: Execucao, data: Registro): Pro
     p_id: e.id, p_resultado: resultado, p_uso: data.usageMetadata ?? null, p_modelo_retornado: data.modelVersion ?? null,
   }));
 }
+function pensamentoEconomico(modelo: string): Registro {
+  if (modelo === "gemini-3.5-flash-lite" || modelo === "gemini-3.6-flash") return { thinkingConfig: { thinkingLevel: "minimal" } };
+  return {};
+}
 function requisicaoRevisao(e: Execucao): Registro {
   const { systemPrompt, transcricao } = montarPromptRevisao(e.snapshot.mensagens, e.snapshot.playbook, e.resultado, e.snapshot.parametros);
   return {
     system_instruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: "user", parts: [{ text: `Interação do dia:\n\n${transcricao}` }] }],
-    generationConfig: { responseMimeType: "application/json", responseSchema: e.snapshot.schemaRevisao },
+    generationConfig: { responseMimeType: "application/json", responseSchema: e.snapshot.schemaRevisao, ...(e.snapshot.configRevisao ?? {}) },
   };
 }
 async function enviarLote(supabase: any, apiKey: string, execucoes: Execucao[], requests: Registro[]): Promise<void> {

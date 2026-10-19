@@ -11,7 +11,7 @@ async function carregar(nome: string, exports: string[]) {
   return await import(`data:application/typescript;base64,${btoa(unescape(encodeURIComponent(fonte)))}`);
 }
 function igual(a: unknown, b: unknown) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${JSON.stringify(a)} != ${JSON.stringify(b)}`); }
-const submit = await carregar('analysis-batch-submit', ['limitesDia','janelaNoturna','hashInput','criarSnapshot','buscarMensagensDoGrupo','extrairJSONResposta','intervaloRecuperacao']);
+const submit = await carregar('analysis-batch-submit', ['limitesDia','janelaNoturna','hashInput','criarSnapshot','buscarMensagensDoGrupo','extrairJSONResposta','intervaloRecuperacao','pensamentoEconomico']);
 const media = await carregar('processar-midia-pendente', ['resolverMime','extrairTexto','encodeBase64','configuracaoPensamento']);
 Deno.test('fronteiras do dia e janela noturna em Fortaleza', () => {
   igual(submit.limitesDia('2026-10-07'), { inicio: '2026-10-07T03:00:00.000Z', fim: '2026-10-08T03:00:00.000Z' });
@@ -89,4 +89,12 @@ Deno.test('pensamento de mídia respeita a família do modelo', () => {
  igual(media.configuracaoPensamento('gemini-2.5-flash'),{thinkingConfig:{thinkingBudget:0}});
  igual(media.configuracaoPensamento('gemini-3.6-flash'),{thinkingConfig:{thinkingLevel:'minimal'}});
  igual(media.configuracaoPensamento('modelo-desconhecido'),{});
+});
+
+Deno.test('novos snapshots usam Flash-Lite e congelam pensamento mínimo na revisão', () => {
+ const snapshot=submit.criarSnapshot('teste','2026-10-18',[],[{criterio:'fluxo',ativo:true,nota_maxima:3,peso_percentual:100,descricao:'critério'}],'playbook');
+ igual(snapshot.modeloAnalise,'gemini-3.5-flash-lite');igual(snapshot.modeloRevisao,'gemini-3.5-flash-lite');
+ igual(snapshot.requestAnalise.generationConfig.thinkingConfig,{thinkingLevel:'minimal'});
+ igual(snapshot.configRevisao,{thinkingConfig:{thinkingLevel:'minimal'}});
+ igual(submit.pensamentoEconomico('modelo-desconhecido'),{});
 });

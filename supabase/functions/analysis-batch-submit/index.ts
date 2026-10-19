@@ -45,8 +45,8 @@ const CRITERIO_LABEL: Record<CriterioKey, string> = {
   fluxo: "Fluxo Ligação/Mensagem", fluidez: "Fluidez", cta: "CTA",
   clareza: "Clareza da Informação", playbook: "Aderência ao Playbook",
 };
-const MODEL = Deno.env.get("GEMINI_ANALYSIS_MODEL") ?? "gemini-3.6-flash";
-const REVIEW_MODEL = Deno.env.get("GEMINI_REVIEW_MODEL") ?? "gemini-3.6-flash";
+const MODEL = Deno.env.get("GEMINI_ANALYSIS_MODEL") ?? "gemini-3.5-flash-lite";
+const REVIEW_MODEL = Deno.env.get("GEMINI_REVIEW_MODEL") ?? "gemini-3.5-flash-lite";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 function createServiceClient() {
@@ -263,7 +263,7 @@ literais da conversa como evidência. Não invente informação que não está n
     request: {
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: "user", parts: [{ text: `Interação do dia a avaliar:\n\n${transcricao}` }] }],
-      generationConfig: { responseMimeType: "application/json", responseSchema },
+      generationConfig: { responseMimeType: "application/json", responseSchema, ...pensamentoEconomico(MODEL) },
     },
     metadata: { key: conversaId, dia },
   };
@@ -475,12 +475,16 @@ async function concluirExecucao(supabase: any, e: Execucao, data: Registro): Pro
     p_id: e.id, p_resultado: resultado, p_uso: data.usageMetadata ?? null, p_modelo_retornado: data.modelVersion ?? null,
   }));
 }
+function pensamentoEconomico(modelo: string): Registro {
+  if (modelo === "gemini-3.5-flash-lite" || modelo === "gemini-3.6-flash") return { thinkingConfig: { thinkingLevel: "minimal" } };
+  return {};
+}
 function requisicaoRevisao(e: Execucao): Registro {
   const { systemPrompt, transcricao } = montarPromptRevisao(e.snapshot.mensagens, e.snapshot.playbook, e.resultado, e.snapshot.parametros);
   return {
     system_instruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: "user", parts: [{ text: `Interação do dia:\n\n${transcricao}` }] }],
-    generationConfig: { responseMimeType: "application/json", responseSchema: e.snapshot.schemaRevisao },
+    generationConfig: { responseMimeType: "application/json", responseSchema: e.snapshot.schemaRevisao, ...(e.snapshot.configRevisao ?? {}) },
   };
 }
 async function enviarLote(supabase: any, apiKey: string, execucoes: Execucao[], requests: Registro[]): Promise<void> {
@@ -550,7 +554,7 @@ function criarSnapshot(conversaId: string, dia: string, mensagens: Mensagem[], p
       enviada_em: m.enviada_em, autor_crm_user_id: m.autor_crm_user_id }));
   const ativos = [...parametros].filter((p) => p.ativo).sort((a, b) => a.criterio.localeCompare(b.criterio));
   return {
-    promptVersao: "diario-v2", modeloAnalise: MODEL, modeloRevisao: REVIEW_MODEL,
+    promptVersao: "diario-v3-lite", configRevisao: pensamentoEconomico(REVIEW_MODEL), modeloAnalise: MODEL, modeloRevisao: REVIEW_MODEL,
     mensagens: ordenadas, parametros: ativos, playbook,
     requestAnalise: montarRequestInline(conversaId, dia, ordenadas, playbook, montarAvaliacaoSchema(ativos)).request,
     schemaRevisao: montarRevisaoSchema(ativos),

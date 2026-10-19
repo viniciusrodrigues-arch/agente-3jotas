@@ -15,6 +15,7 @@ create table public.analises_bruta(conversa_id uuid,dia date,${campos},modelo_us
 const migration = process.argv[2];
 const arquivos=['20261013142056_gemini_execucoes_diarias_estrutura.sql','20261013142109_gemini_execucoes_diarias_operacoes.sql','20261013142303_gemini_execucoes_diarias_midia_e_fila.sql','20261013142758_gemini_recuperacao_midia_periodo.sql'];
 await pg.exec("create table public.analise_batches(status text);insert into public.analise_batches values('in_progress');");
+arquivos.push(...(await fs.readdir('supabase/migrations')).filter(n=>n.endsWith('_adiar_midia_por_configuracao.sql')));
 const sqlMigration=migration ? await fs.readFile(migration,'utf8') : (await Promise.all(arquivos.map(nome=>fs.readFile('supabase/migrations/'+nome,'utf8')))).join('\n');
 let bloqueouLegado=false;
 try{await pg.exec(sqlMigration);}catch(err){bloqueouLegado=String(err).includes('batches legados ativos');await pg.exec('rollback');}
@@ -105,6 +106,12 @@ const periodo=await q("select * from gemini_reservar_midia_periodo(1,'2026-10-09
 assert(periodo.length===1 && periodo[0].id===dentro.id,'mídia fora do período reservada');
 const preservada=(await q('select texto,midia_tentativas from mensagens where id=$1',[fora.id]))[0];
 assert(preservada.texto==='texto fora do período' && preservada.midia_tentativas===0,'recuperação alterou mídia fora do período');
+// HTTP 402 mantém o texto e não consome as cinco tentativas do arquivo.
+const original=(await q('select texto,midia_tentativas from mensagens where id=$1',[dentro.id]))[0];
+assert((await q('select gemini_adiar_midia_configuracao($1,$2,$3)',[dentro.id,periodo[0].midia_lease,'Gemini HTTP 402']))[0].gemini_adiar_midia_configuracao,'recusa não adiada');
+const adiada=(await q('select texto,midia_descrita,midia_lease,midia_tentativas,midia_proxima_tentativa_em>now() as adiada from mensagens where id=$1',[dentro.id]))[0];
+assert(adiada.texto===original.texto && !adiada.midia_descrita && adiada.midia_lease===null && adiada.adiada,'402 descartou conteúdo ou não adiou');
+assert(adiada.midia_tentativas===original.midia_tentativas-1,'402 consumiu tentativa de mídia');
 // RPCs estreitas não são públicas; tabelas com snapshots possuem RLS.
 assert(!(await q("select has_function_privilege('anon','public.gemini_reservar(uuid,date,text,text,text,text,jsonb,bigint)','execute') as permitido"))[0].permitido,'RPC exposta anon');
 assert((await q("select relrowsecurity from pg_class where relname='gemini_execucoes'"))[0].relrowsecurity,'snapshots sem RLS');

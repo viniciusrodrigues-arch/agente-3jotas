@@ -41,7 +41,7 @@ interface MensagemPendente {
 // disputar o WORKER_RESOURCE_LIMIT; com cron de 5 em 5 minutos, um volume
 // alto de mídia pendente é absorvido em poucos ciclos, não numa invocação só.
 const LOTE_MAXIMO = 15;
-const MODELO_MIDIA = Deno.env.get("GEMINI_MEDIA_MODEL") ?? "gemini-3.6-flash";
+const MODELO_MIDIA = Deno.env.get("GEMINI_MEDIA_MODEL") ?? "gemini-3.5-flash-lite";
 
 const INSTRUCAO_AUDIO =
   `Transcreva toda a fala deste áudio, do início ao fim, fielmente e no idioma original (normalmente português brasileiro).
@@ -56,7 +56,7 @@ const INSTRUCAO_DOCUMENTO =
   "Resuma em 1-2 frases o conteúdo deste documento, em português. Cite valores, nomes e datas relevantes se houver — não invente informação que não está no documento.";
 
 class FalhaMidia extends Error {
-  constructor(message: string, public uso: unknown = null, public modeloRetornado: string | null = null, public repetir = true) { super(message); }
+  constructor(message: string, public uso: unknown = null, public modeloRetornado: string | null = null, public repetir = true, public configuracao = false) { super(message); }
 }
 async function checarBanco(consulta: PromiseLike<{ data: any; error: any }>): Promise<any> {
   const { data, error } = await consulta;
@@ -117,6 +117,10 @@ Deno.serve(async (req) => {
         // Trigger transacional enfileira a canônica e o dia da mensagem alterada.
       } catch (err) {
         const falha = err instanceof FalhaMidia ? err : new FalhaMidia("Processamento não confirmado; conferir item", null, null, false);
+        if (falha.configuracao) {
+          await checarBanco(supabase.rpc("gemini_adiar_midia_configuracao", { p_id: msg.id, p_lease: msg.midia_lease, p_erro: falha.message }));
+          return Response.json({ erro: falha.message, processadas, falhas: falhas + 1, adiada_por_configuracao: true }, { status: 502 });
+        }
         await checarBanco(supabase.rpc("gemini_finalizar_midia", {
           p_id: msg.id, p_lease: msg.midia_lease, p_texto: null, p_erro: falha.message,
           p_uso: falha.uso, p_modelo: MODELO_MIDIA, p_modelo_retornado: falha.modeloRetornado, p_repetir: falha.repetir,
@@ -191,7 +195,7 @@ async function descreverMidia(
     },
   );
   } catch { throw new FalhaMidia("Envio Gemini sem confirmação; não repetir automaticamente", null, null, false); }
-  if (!resp.ok) throw new FalhaMidia(`Gemini HTTP ${resp.status}`, null, null, resp.status === 429);
+  if (!resp.ok) throw new FalhaMidia(`Gemini HTTP ${resp.status}`, null, null, resp.status === 429, [401, 402, 403, 404].includes(resp.status));
   const data = await resp.json();
   try { return { texto: extrairTexto(data), uso: data.usageMetadata ?? null, modeloRetornado: data.modelVersion ?? null }; }
   catch { throw new FalhaMidia("Resposta de mídia inválida; conferir antes de nova inferência", data.usageMetadata ?? null, data.modelVersion ?? null, false); }

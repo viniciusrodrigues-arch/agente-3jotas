@@ -16,15 +16,19 @@ select (criada_em at time zone 'America/Fortaleza')::date as dia_consumo,modelo,
  sum((uso->>'thoughtsTokenCount')::bigint) as raciocinio
 from public.gemini_uso_midia group by 1,2 order by 1 desc,2;
 
--- Estimativa de análise/revisão: preencher tarifas vigentes por milhão de tokens.
+-- Estimativa de análise/revisão com tarifas consultadas em 19/10/2026 por milhão de tokens.
+-- Fonte: https://ai.google.dev/gemini-api/docs/pricing
+-- 3.6 usa preço promocional até 31/12/2026; revalidar antes de consultar outros períodos.
 -- NULL é desconhecido, nunca zero. Cada modalidade tem sua própria tarifa.
 -- Mídia fica separada porque áudio/imagem podem ter outras tarifas de entrada.
 -- Saída é totalTokenCount - promptTokenCount; não soma thoughtsTokenCount outra vez.
 -- A estimativa precisa ser conciliada com a fatura, não é custo observado.
 with tarifas(modelo,modalidade,entrada_usd,cache_usd,saida_usd) as (
  values
- ('gemini-3.6-flash','batch',null::numeric,null::numeric,null::numeric),
- ('gemini-3.6-flash','manual',null::numeric,null::numeric,null::numeric)
+ ('gemini-3.6-flash','batch',0.375::numeric,0.0375::numeric,1.875::numeric),
+ ('gemini-3.6-flash','manual',0.75::numeric,0.075::numeric,3.75::numeric),
+ ('gemini-3.5-flash-lite','batch',0.15::numeric,0.02::numeric,1.25::numeric),
+ ('gemini-3.5-flash-lite','manual',0.30::numeric,0.03::numeric,2.50::numeric)
 ), calculo as (
  select e.*,t.entrada_usd,t.cache_usd,t.saida_usd,
  case when t.entrada_usd is not null and t.saida_usd is not null

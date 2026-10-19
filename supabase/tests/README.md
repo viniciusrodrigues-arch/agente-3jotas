@@ -9,4 +9,4 @@ npm install --prefix /tmp/3jotas-sql-tests @electric-sql/pglite@0.3.14 --ignore-
 node supabase/tests/gemini_execucoes_sql.mjs
 ```
 
-PGlite executa PostgreSQL em um banco descartável com fixtures das tabelas/roles necessárias. O teste aplica as quatro migrations reais e o relatório SQL. Para outra instalação, configure PGLITE_MODULE com o caminho absoluto do módulo `dist/index.js`. Não é uma validação do runtime Edge/pg_cron; essa confirmação exige publicação no Supabase e uma execução real.
+PGlite executa PostgreSQL em um banco descartável com fixtures das tabelas/roles necessárias. O teste aplica as migrations reais e o relatório SQL. Para outra instalação, configure PGLITE_MODULE com o caminho absoluto do módulo `dist/index.js`. Não é uma validação do runtime Edge/pg_cron; essa confirmação exige publicação no Supabase e uma execução real.
