@@ -54,7 +54,7 @@ Deno.test('áudio: assinatura MIME, resposta multipart e base64 em blocos', () =
   const bytes=new Uint8Array(50000).fill(255);igual(media.encodeBase64(bytes.buffer),btoa(String.fromCharCode(...bytes)));
 });
 
-const poll = await carregar('analysis-batch-poll', ['registrarFalhaPoll','enviarLote']);
+const poll = await carregar('analysis-batch-poll', ['registrarFalhaPoll','enviarLote','prepararRevisaoRecuperacao','idsConfirmadosNaOperacao']);
 Deno.test('404 faz backoff e entra em quarentena na terceira falha; 401 é imediato', async () => {
   const updates:any[]=[]; const rpcs:any[]=[];
   const cliente={from(){return {update(data:any){updates.push(data);return this;},eq(){return Promise.resolve({data:null,error:null});}};},rpc(nome:string,args:any){rpcs.push({nome,args});return Promise.resolve({data:null,error:null});}};
@@ -97,4 +97,21 @@ Deno.test('novos snapshots usam Flash-Lite e congelam pensamento mínimo na revi
  igual(snapshot.requestAnalise.generationConfig.thinkingConfig,{thinkingLevel:'minimal'});
  igual(snapshot.configRevisao,{thinkingConfig:{thinkingLevel:'minimal'}});
  igual(submit.pensamentoEconomico('modelo-desconhecido'),{});
+});
+
+Deno.test('recuperação de revisão reutiliza resultado e mantém a primeira execução intacta', async () => {
+ const primeira={id:'primeira',conversa_id:'a',dia:'2026-10-14',input_hash:'original',modalidade:'manual',snapshot:{modeloAnalise:'gemini-3.6-flash',modeloRevisao:'gemini-3.6-flash',mensagens:[{texto:'não quero'}]},resultado:{fluxo:{score:1}}};
+ const antes=JSON.stringify(primeira);
+ const nova=await poll.prepararRevisaoRecuperacao(primeira);
+ igual(JSON.stringify(primeira),antes);igual(nova.resultado,primeira.resultado);
+ igual(nova.snapshot.modeloAnalise,'gemini-3.6-flash');igual(nova.snapshot.modeloRevisao,'gemini-3.5-flash-lite');
+ igual(nova.modalidade,'batch');igual(nova.input_hash.length,64);igual(nova.input_hash===primeira.input_hash,false);
+ igual((await poll.prepararRevisaoRecuperacao(primeira)).input_hash,nova.input_hash);
+});
+
+Deno.test('reconciliação exige IDs de execução confirmados pelo provedor', () => {
+ const pendentes=[{id:'a'},{id:'b'}];
+ igual(poll.idsConfirmadosNaOperacao({name:'batches/abc',metadata:{displayName:'diario-analise-a'}},pendentes),[]);
+ igual(poll.idsConfirmadosNaOperacao({name:'batches/abc',response:{inlinedResponses:{inlinedResponses:[{metadata:{key:'a'}}]}}},pendentes),['a']);
+ igual(poll.idsConfirmadosNaOperacao({name:'https://outro/abc',response:{inlinedResponses:{inlinedResponses:[{metadata:{key:'a'}}]}}},pendentes),[]);
 });

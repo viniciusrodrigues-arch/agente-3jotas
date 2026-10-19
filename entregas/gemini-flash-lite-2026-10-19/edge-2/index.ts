@@ -185,6 +185,55 @@ async function concluirExecucao(supabase: any, e: Execucao, data: Registro): Pro
     p_id: e.id, p_resultado: resultado, p_uso: data.usageMetadata ?? null, p_modelo_retornado: data.modelVersion ?? null,
   }));
 }
+function idsConfirmadosNaOperacao(op: Registro, pendentes: Execucao[]): string[] {
+  if (typeof op.name !== "string" || !/^batches\/[A-Za-z0-9_-]+$/.test(op.name)) return [];
+  const md = op.metadata?.batch ?? op.metadata ?? op;
+  const entrada = md.inputConfig?.requests?.requests ?? md.input_config?.requests?.requests ?? [];
+  const saida = op.response?.inlinedResponses?.inlinedResponses ?? [];
+  const keys = new Set([...entrada, ...saida].map((i: Registro) => i.metadata?.key));
+  return pendentes.filter((e) => keys.has(e.id)).map((e) => e.id);
+}
+async function reconciliarEnviosSemConfirmacao(supabase: any, apiKey: string, cursor = ""): Promise<Registro> {
+  let pendentes = await db<Execucao[]>(supabase.from("gemini_execucoes").select("*").eq("estado", "incerta").is("batch_externo", null)
+    .eq("erro", "Envio sem confirmação; reconciliar antes de reenviar").limit(50));
+  const inicio = Date.now();
+  let token = cursor, confirmadas = 0, paginas = 0, operacoes = 0;
+  for (let pagina = 0; pagina < 100 && pendentes.length && Date.now() - inicio < 35_000; pagina++) {
+    const url = new URL(`${GEMINI_API_URL}/batches`);url.searchParams.set("pageSize", "20");
+    if (token) url.searchParams.set("pageToken", token);
+    const resp = await fetch(url, { headers: { "x-goog-api-key": apiKey }, signal: AbortSignal.timeout(10_000) });
+    if (!resp.ok) return { confirmadas, naoLocalizadas: pendentes.length, http: resp.status };
+    const data = await resp.json();
+    const lista = data.operations ?? data.batches ?? [];
+    paginas++; operacoes += lista.length;
+    for (let op of lista) {
+      let ids = idsConfirmadosNaOperacao(op, pendentes);
+      const md = op.metadata?.batch ?? op.metadata ?? op;
+      if (!ids.length && pendentes.some((e) => md.displayName === `diario-${e.etapa}-${e.id}`) && /^batches\/[A-Za-z0-9_-]+$/.test(op.name)) {
+        const detalhe = await fetch(`${GEMINI_API_URL}/${op.name}`, { headers: { "x-goog-api-key": apiKey }, signal: AbortSignal.timeout(10_000) });
+        if (detalhe.ok) { op = await detalhe.json(); ids = idsConfirmadosNaOperacao(op, pendentes); }
+      }
+      if (!ids.length) continue;
+      await db(supabase.from("gemini_execucoes").update({ estado: "submetida", batch_externo: op.name,
+        erro: null, proxima_tentativa_em: null, atualizada_em: new Date().toISOString() }).in("id", ids).eq("estado", "incerta"));
+      confirmadas += ids.length;pendentes = pendentes.filter((e) => !ids.includes(e.id));
+    }
+    token = data.nextPageToken ?? data.next_page_token ?? "";if (!token) break;
+  }
+  return { confirmadas, naoLocalizadas: pendentes.length, paginas, operacoes, haMais: !!token, proximaPagina: token };
+}
+async function prepararRevisaoRecuperacao(primeira: Execucao): Promise<Execucao> {
+  const snapshot = { ...primeira.snapshot, modeloRevisao: REVIEW_MODEL, configRevisao: pensamentoEconomico(REVIEW_MODEL),
+    operacao: { tipo: "recuperacao_revisao", hashOrigem: primeira.input_hash } };
+  function ordenar(v: any): any {
+    if (Array.isArray(v)) return v.map(ordenar);
+    if (v && typeof v === "object") return Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordenar(v[k])]));
+    return v;
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(ordenar(snapshot)))));
+  const input_hash = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+  return { ...primeira, snapshot, input_hash, modalidade: "batch" };
+}
 function pensamentoEconomico(modelo: string): Registro {
   if (modelo === "gemini-3.5-flash-lite" || modelo === "gemini-3.6-flash") return { thinkingConfig: { thinkingLevel: "minimal" } };
   return {};
@@ -265,6 +314,14 @@ Deno.serve(async (req) => {
   if (!apiKey) return jsonResposta({ erro: "GEMINI_API_KEY não configurada" }, 500);
   const supabase = createServiceClient();
   const inicio = Date.now();
+  const body = await req.json().catch(() => ({}));
+  if (body?.reconciliarEnvios === true) {
+    const cursor = body.cursorReconciliacao ?? "";
+    if (typeof cursor !== "string" || cursor.length > 8192) return jsonResposta({ erro: "Cursor inválido" }, 400);
+    try { return jsonResposta(await reconciliarEnviosSemConfirmacao(supabase, apiKey, cursor)); }
+    catch { return jsonResposta({ erro: "Reconciliação não confirmada; nenhum envio será repetido" }, 502); }
+  }
+  const recuperarRevisoes = body?.recuperarRevisoes === true;
   let concluidas = 0;
   try {
     // Operações antigas em envio são incertas: não gerar outra cobrança automaticamente.
@@ -306,6 +363,10 @@ Deno.serve(async (req) => {
     // A revisão é recuperável após interrupção do worker e usa o snapshot do primeiro passe.
     if (Date.now() - inicio < 65_000) {
       const primeiras = await db<Execucao[]>(supabase.rpc("gemini_pendentes_revisao"));
+      if (recuperarRevisoes) {
+        const recuperaveis = await db<Execucao[]>(supabase.rpc("gemini_revisoes_recuperaveis"));
+        for (const primeira of recuperaveis ?? []) primeiras.push(await prepararRevisaoRecuperacao(primeira));
+      }
       const gruposRevisao = new Map<string, { execucoes: Execucao[]; requests: Registro[] }>();
       for (const primeira of primeiras ?? []) {
         if (Date.now() - inicio > 65_000) break;

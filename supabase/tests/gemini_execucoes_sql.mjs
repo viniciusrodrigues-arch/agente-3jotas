@@ -15,7 +15,7 @@ create table public.analises_bruta(conversa_id uuid,dia date,${campos},modelo_us
 const migration = process.argv[2];
 const arquivos=['20261013142056_gemini_execucoes_diarias_estrutura.sql','20261013142109_gemini_execucoes_diarias_operacoes.sql','20261013142303_gemini_execucoes_diarias_midia_e_fila.sql','20261013142758_gemini_recuperacao_midia_periodo.sql'];
 await pg.exec("create table public.analise_batches(status text);insert into public.analise_batches values('in_progress');");
-arquivos.push(...(await fs.readdir('supabase/migrations')).filter(n=>n.endsWith('_adiar_midia_por_configuracao.sql')));
+arquivos.push(...(await fs.readdir('supabase/migrations')).filter(n=>n.endsWith('_adiar_midia_por_configuracao.sql') || n.endsWith('_revisoes_recuperaveis_sem_repetir_analise.sql')));
 const sqlMigration=migration ? await fs.readFile(migration,'utf8') : (await Promise.all(arquivos.map(nome=>fs.readFile('supabase/migrations/'+nome,'utf8')))).join('\n');
 let bloqueouLegado=false;
 try{await pg.exec(sqlMigration);}catch(err){bloqueouLegado=String(err).includes('batches legados ativos');await pg.exec('rollback');}
@@ -112,6 +112,19 @@ assert((await q('select gemini_adiar_midia_configuracao($1,$2,$3)',[dentro.id,pe
 const adiada=(await q('select texto,midia_descrita,midia_lease,midia_tentativas,midia_proxima_tentativa_em>now() as adiada from mensagens where id=$1',[dentro.id]))[0];
 assert(adiada.texto===original.texto && !adiada.midia_descrita && adiada.midia_lease===null && adiada.adiada,'402 descartou conteúdo ou não adiou');
 assert(adiada.midia_tentativas===original.midia_tentativas-1,'402 consumiu tentativa de mídia');
+// Revisão faltante aproveita a primeira avaliação e não duplica seu consumo.
+await enfileirar('2026-10-02');
+const vr=(await q("select conteudo_versao from analises where conversa_id=$1 and dia='2026-10-02'",[id]))[0].conteudo_versao;
+const pronta=(await reservar('2026-10-02','revisao-sem-repetir','analise',vr))[0];await enviar(pronta);await concluir(pronta);
+const bloqueada=(await reservar('2026-10-02','revisao-sem-repetir','revisao',vr))[0];await enviar(bloqueada);
+await q("select gemini_falhar($1,'Batch HTTP 402',false,false)",[bloqueada.id]);
+const consumoAntes=(await q('select uso,atualizada_em from gemini_execucoes where id=$1',[pronta.id]))[0];
+assert((await q('select * from gemini_revisoes_recuperaveis()')).some(e=>e.id===pronta.id),'revisão recusada não recuperável');
+const novaRev=(await q('select * from gemini_reservar($1,$2,$3,$4,$5,$6,$7,$8)',[id,'2026-10-02','hash-nova-revisao','revisao','gemini-3.5-flash-lite','batch',{parametros:[],operacao:{tipo:'recuperacao_revisao'}},vr]))[0];
+assert(!(await q('select * from gemini_revisoes_recuperaveis()')).some(e=>e.id===pronta.id),'recuperação duplicada');
+await enviar(novaRev);await concluir(novaRev);
+assert((await q("select status from analises where conversa_id=$1 and dia='2026-10-02'",[id]))[0].status==='concluida','revisão recuperada não publicada');
+assert(JSON.stringify(consumoAntes)===JSON.stringify((await q('select uso,atualizada_em from gemini_execucoes where id=$1',[pronta.id]))[0]),'primeira avaliação cobrada ou alterada novamente');
 // RPCs estreitas não são públicas; tabelas com snapshots possuem RLS.
 assert(!(await q("select has_function_privilege('anon','public.gemini_reservar(uuid,date,text,text,text,text,jsonb,bigint)','execute') as permitido"))[0].permitido,'RPC exposta anon');
 assert((await q("select relrowsecurity from pg_class where relname='gemini_execucoes'"))[0].relrowsecurity,'snapshots sem RLS');
@@ -136,5 +149,16 @@ await q("update analises set status='consolidada' where dia between '2026-10-08'
 await q("update mensagens set midia_descrita=true where enviada_em>='2026-10-09T03:00:00Z' and enviada_em<'2026-10-11T03:00:00Z'");
 for(const j of await q("select command from cron.job where jobname like 'gemini-recuperacao-%'")){await pg.exec(j.command);}
 assert((await q("select count(*)::integer as n from cron.job where jobname like 'gemini-recuperacao-%'"))[0].n===0,'recuperação não encerrou os jobs');
+// Driver genérico de backlog mantém o limite de sete dias e dispensa entradas incertas.
+await q('select cron.schedule($1,$2,$3)',['analysis-batch-poll','*/10 * * * *',comandoTeste]);
+await enfileirar('2026-10-15');
+await pg.exec(await fs.readFile('supabase/manual/recuperar-pendencias-flash-lite-2026-10-19.sql','utf8'));
+const driver=(await q("select command from cron.job where jobname='gemini-pendentes-20261019'"))[0];
+await pg.exec(driver.command);
+const feitas=await q("select body from net.chamadas where body->>'recuperacao'='true' order by id desc limit 1");
+assert(feitas.length===1,'driver não acionou recuperação');
+const intervalo=feitas[0].body;
+assert((Date.parse(intervalo.diaFim)-Date.parse(intervalo.diaInicio))/86400000<=6,'driver excedeu sete dias');
+assert(intervalo.diaFim<'2026-10-19','driver incluiu o dia em andamento');
 console.log('OK: migração real + reservas, dias, versões, revisão, incerteza, mídia, permissões e métricas.');
 await pg.close();
