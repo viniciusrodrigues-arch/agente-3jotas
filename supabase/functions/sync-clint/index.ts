@@ -510,15 +510,19 @@ async function atualizarHandoffIA(
 
   const { data: mensagens } = await supabase
     .from("mensagens")
-    .select("remetente, enviada_em, autor_crm_user_id")
+    .select("remetente, enviada_em, autor_crm_user_id, texto, midia_content_type")
     .eq("conversa_id", conversaId)
     .order("enviada_em", { ascending: true });
 
   const lista = mensagens ?? [];
 
   const indiceHumana = lista.findIndex(
-    (m: { remetente: string; autor_crm_user_id: string | null }) =>
-      m.remetente === "corretor" && m.autor_crm_user_id,
+    (m: { remetente: string; autor_crm_user_id: string | null; texto: string; midia_content_type: string | null }) =>
+      m.remetente === "corretor" && m.autor_crm_user_id &&
+      m.midia_content_type !== "TEMPLATE" &&
+      !/^\[Conteúdo sem texto: .+\]$/.test(m.texto.trim()) &&
+      !PREFIXO_AUTOR_SEM_CONTEUDO.test(m.texto.trim()) &&
+      !/sou a (l[ií]via|maria)[,.]?\s*assistente/i.test(m.texto),
   );
 
   // indiceHumana === -1: nenhuma mensagem de corretor tem autor_crm_user_id
@@ -603,7 +607,7 @@ const PREFIXO_AUTOR_SEM_CONTEUDO = /^(?:\*[^*]+:\*|\*?\[(?:CLOSER|SDR)\]\s+[^*\r
 
 function montarCamposMensagem(msg: ClintMessage, remetente: "corretor" | "lead"): CamposMidia {
   if (msg.content_type === "TEMPLATE") {
-    return { texto: "[Conteúdo sem texto: TEMPLATE]", midiaContentType: null, midiaContentUrl: null, midiaMimeType: null, midiaNome: null, midiaDescrita: true };
+    return { texto: "[Conteúdo sem texto: TEMPLATE]", midiaContentType: "TEMPLATE", midiaContentUrl: null, midiaMimeType: null, midiaNome: null, midiaDescrita: true };
   }
   if (msg.content && !PREFIXO_AUTOR_SEM_CONTEUDO.test(msg.content.trim())) {
     return { texto: msg.content, midiaContentType: null, midiaContentUrl: null, midiaMimeType: null, midiaNome: null, midiaDescrita: true };

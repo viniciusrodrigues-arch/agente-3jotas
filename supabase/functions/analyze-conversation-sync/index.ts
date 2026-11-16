@@ -48,6 +48,8 @@ const JANELA_INSIGHT = 20;
 const MINIMO_PARA_INSIGHT = 3;
 
 interface Mensagem {
+  autor_crm_user_id?: string | null;
+  midia_content_type?: string | null;
   id: string;
   conversa_id: string;
   remetente: RemetenteTipo;
@@ -124,14 +126,16 @@ async function buscarMensagensDoGrupo(
     .select("*")
     .in("conversa_id", conversaIds)
     .order("enviada_em", { ascending: true })
-    .returns<Mensagem[]>();
+    .returns();
 
   // Se um agente de IA qualificou o lead antes do corretor humano entrar,
   // tudo até o handoff (`humano_assumiu_em`) fica de fora — não é atendimento
   // do corretor. Cada conversa do grupo tem seu próprio handoff (um chat
   // reaberto pelo Clint normalmente já começa direto com o corretor, sem
   // fase de IA de novo).
-  return (todasMensagens ?? []).filter((m) => {
+  return (todasMensagens ?? []).filter((m: Mensagem) => {
+    if (m.midia_content_type === "TEMPLATE" || /^\[Conteúdo sem texto: .+\]$/.test(m.texto.trim())) return false;
+    if (m.remetente === "corretor" && (!m.autor_crm_user_id || /^(?:\*[^*]+:\*|\*?\[(?:CLOSER|SDR)\]\s+[^*\r\n]+\*?)\s*$/i.test(m.texto.trim()) || /sou a (l[ií]via|maria)[,.]?\s*assistente/i.test(m.texto))) return false;
     const handoff = handoffPorConversa.get(m.conversa_id);
     return !handoff || m.enviada_em > handoff;
   });

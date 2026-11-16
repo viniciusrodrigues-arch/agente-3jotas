@@ -13,6 +13,7 @@ type RemetenteTipo = "corretor" | "lead";
 type CriterioKey = "fluxo" | "fluidez" | "cta" | "clareza" | "playbook";
 
 interface Mensagem {
+  midia_content_type?: string | null;
   id: string;
   conversa_id: string;
   remetente: RemetenteTipo;
@@ -140,7 +141,8 @@ async function buscarMensagensDoGrupo(
     // quando o content_type do Clint é TEMPLATE (ver textoMensagem/switch
     // default). Não reflete comunicação real, não deve entrar na
     // transcrição nem contar como "corretor humano engajou".
-    if (EH_CONTEUDO_VAZIO.test(m.texto)) return false;
+    if (EH_CONTEUDO_VAZIO.test(m.texto.trim()) || m.midia_content_type === "TEMPLATE") return false;
+    if (m.remetente === "corretor" && !m.autor_crm_user_id) return false;
     // Registros antigos também podem conter apenas a identificação interna.
     if (m.remetente === "corretor" && /^(?:\*[^*]+:\*|\*?\[(?:CLOSER|SDR)\]\s+[^*\r\n]+\*?)\s*$/i.test(m.texto.trim())) return false;
 

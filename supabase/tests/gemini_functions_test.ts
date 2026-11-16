@@ -20,7 +20,12 @@ Deno.test('fronteiras do dia e janela noturna em Fortaleza', () => {
   igual(submit.janelaNoturna(new Date('2026-10-08T07:00:00Z')), false);
 });
 Deno.test('dia alvo e paginação preservam ontem mesmo com mensagens de hoje', async () => {
-  const msgs = Array.from({ length: 1001 }, (_,i) => ({ id: `${i}`, conversa_id: 'a', remetente: 'corretor', autor_crm_user_id: 'humano', texto: 'oi', enviada_em:'2026-10-07T15:00:00Z' }));
+  const msgs: any[] = Array.from({ length: 1001 }, (_,i) => ({ id: `${i}`, conversa_id: 'a', remetente: 'corretor', autor_crm_user_id: 'humano', texto: 'oi', enviada_em:'2026-10-07T15:00:00Z' }));
+  msgs.push(
+    {...msgs[0], id:'template', midia_content_type:'TEMPLATE', texto:'Olá, continue o atendimento'},
+    {...msgs[0], id:'bot', autor_crm_user_id:null},
+    {...msgs[0], id:'identificacao', texto:'*[CLOSER] KAWÃ FÉLIX*'},
+  );
   msgs.push({ ...msgs[0], id:'hoje', enviada_em:'2026-10-08T15:00:00Z' });
   const cliente = { rpc() { return Promise.resolve({ data: [{id:'a',humano_assumiu_em:null,canonica_id:'a'}], error: null }); }, from(table: string) {
     let start=0,end=499,lower='',upper='';

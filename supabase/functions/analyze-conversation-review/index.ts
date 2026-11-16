@@ -40,6 +40,8 @@ const CRITERIO_LABEL: Record<CriterioKey, string> = {
 const MAX_POR_EXECUCAO = 15;
 
 interface Mensagem {
+  autor_crm_user_id?: string | null;
+  midia_content_type?: string | null;
   id: string;
   conversa_id: string;
   remetente: RemetenteTipo;
@@ -111,9 +113,11 @@ async function buscarMensagensDoGrupo(
     .select("*")
     .in("conversa_id", conversaIds)
     .order("enviada_em", { ascending: true })
-    .returns<Mensagem[]>();
+    .returns();
 
-  return (todasMensagens ?? []).filter((m) => {
+  return (todasMensagens ?? []).filter((m: Mensagem) => {
+    if (m.midia_content_type === "TEMPLATE" || /^\[Conteúdo sem texto: .+\]$/.test(m.texto.trim())) return false;
+    if (m.remetente === "corretor" && (!m.autor_crm_user_id || /^(?:\*[^*]+:\*|\*?\[(?:CLOSER|SDR)\]\s+[^*\r\n]+\*?)\s*$/i.test(m.texto.trim()) || /sou a (l[ií]via|maria)[,.]?\s*assistente/i.test(m.texto))) return false;
     const handoff = handoffPorConversa.get(m.conversa_id);
     return !handoff || m.enviada_em > handoff;
   });
@@ -194,7 +198,7 @@ async function revisarUmaConversa(supabase: any, conversaId: string, parametros:
       .from("conversas")
       .select("id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id")
       .eq("id", conversaId)
-      .single<Conversa>(),
+      .single(),
     supabase.from("analises_bruta").select("*").eq("conversa_id", conversaId).maybeSingle(),
   ]);
 

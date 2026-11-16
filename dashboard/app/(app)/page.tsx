@@ -6,11 +6,8 @@ import { ScoreBadge } from "@/components/ScoreBadge";
 import { TendenciaChart } from "@/components/TendenciaChart";
 import { PontosAtencaoCard } from "@/components/PontosAtencaoCard";
 import { CorretoresComErrosCard } from "@/components/CorretoresComErrosCard";
-import { BuscarEAnalisarButton } from "@/components/BuscarEAnalisarButton";
-import { getDashboardSession } from "@/lib/session";
 
 export default async function DashboardPage() {
-  const session = await getDashboardSession();
   const d = await buscarDashboardOverview();
 
   return (
@@ -20,7 +17,6 @@ export default async function DashboardPage() {
         <p className="text-sm text-text-secondary">Visão geral dos atendimentos</p>
       </div>
 
-      {session?.role === "admin" && <BuscarEAnalisarButton />}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
