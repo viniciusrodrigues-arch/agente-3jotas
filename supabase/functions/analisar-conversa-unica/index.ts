@@ -140,6 +140,8 @@ async function buscarMensagensDoGrupo(
     // default). Não reflete comunicação real, não deve entrar na
     // transcrição nem contar como "corretor humano engajou".
     if (EH_CONTEUDO_VAZIO.test(m.texto)) return false;
+    // Registros antigos também podem conter apenas a identificação interna.
+    if (m.remetente === "corretor" && /^(?:\*[^*]+:\*|\*?\[(?:CLOSER|SDR)\]\s+[^*\r\n]+\*?)\s*$/i.test(m.texto.trim())) return false;
 
     // Auto-apresentação da IA de qualificação — desconsidera mesmo se por
     // algum motivo vier com autor_crm_user_id preenchido (pedido explícito:

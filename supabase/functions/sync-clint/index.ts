@@ -599,10 +599,13 @@ interface CamposMidia {
 // checagem, isso passava como se fosse conteúdo genuíno e a IA analisava uma
 // mensagem vazia como se o corretor tivesse escrito algo. Ocorre aos
 // milhares em produção (ex: 652 casos só pro Victor Castro).
-const PREFIXO_AUTOR_SEM_CONTEUDO = /^\*[^*]+:\*\s*$/;
+const PREFIXO_AUTOR_SEM_CONTEUDO = /^(?:\*[^*]+:\*|\*?\[(?:CLOSER|SDR)\]\s+[^*\r\n]+\*?)\s*$/i;
 
 function montarCamposMensagem(msg: ClintMessage, remetente: "corretor" | "lead"): CamposMidia {
-  if (msg.content && !PREFIXO_AUTOR_SEM_CONTEUDO.test(msg.content)) {
+  if (msg.content_type === "TEMPLATE") {
+    return { texto: "[Conteúdo sem texto: TEMPLATE]", midiaContentType: null, midiaContentUrl: null, midiaMimeType: null, midiaNome: null, midiaDescrita: true };
+  }
+  if (msg.content && !PREFIXO_AUTOR_SEM_CONTEUDO.test(msg.content.trim())) {
     return { texto: msg.content, midiaContentType: null, midiaContentUrl: null, midiaMimeType: null, midiaNome: null, midiaDescrita: true };
   }
 

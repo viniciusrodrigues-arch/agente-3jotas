@@ -115,3 +115,12 @@ Deno.test('reconciliação exige IDs de execução confirmados pelo provedor', (
  igual(poll.idsConfirmadosNaOperacao({name:'batches/abc',response:{inlinedResponses:{inlinedResponses:[{metadata:{key:'a'}}]}}},pendentes),['a']);
  igual(poll.idsConfirmadosNaOperacao({name:'https://outro/abc',response:{inlinedResponses:{inlinedResponses:[{metadata:{key:'a'}}]}}},pendentes),[]);
 });
+
+const syncClint = await carregar('sync-clint', ['montarCamposMensagem']);
+Deno.test('templates com texto e identificação interna não viram atendimento; texto humano é preservado', () => {
+  for (const content of ['*[CLOSER] KAWÃ FÉLIX*', '*Victor Castro:* \n ']) {
+    igual(syncClint.montarCamposMensagem({content,content_type:'TEXT'},'corretor').texto, '[Conteúdo sem texto: TEXT]');
+  }
+  igual(syncClint.montarCamposMensagem({content:'Olá, podemos continuar?',content_type:'TEMPLATE'},'corretor').texto, '[Conteúdo sem texto: TEMPLATE]');
+  igual(syncClint.montarCamposMensagem({content:'*[CLOSER] KAWÃ FÉLIX*\nOlá, Maria!',content_type:'TEXT'},'corretor').texto, '*[CLOSER] KAWÃ FÉLIX*\nOlá, Maria!');
+});
